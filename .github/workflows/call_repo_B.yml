@@ -1,0 +1,47 @@
+name: Delegate to Repo B
+
+on:
+  push:
+    branches: [ main ]
+
+permissions:
+  contents: write      # required to call the dispatch API
+  actions: read        # required to query workflow runs in repo B
+
+jobs:
+  trigger-repo-b:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger repo B workflow
+        run: |
+          curl -s -X POST \
+            -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
+            -H "Accept: application/vnd.github+json" \
+            https://api.github.com/repos/org/repo-b/dispatches \
+            -d '{
+              "event_type":"run-ci",
+              "client_payload":{
+                "ref":"${{ github.ref }}",
+                "caller_run_id":"${{ github.run_id }}"
+              }
+            }'
+
+      - name: Wait briefly for run to register
+        run: sleep 10
+
+      - name: Find matching workflow run in repo B
+        id: get-run
+        run: |
+          run_id=$(curl -s \
+            -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
+            -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/org/repo-b/actions/runs?event=repository_dispatch&per_page=20" \
+            | jq -r --arg caller "${{ github.run_id }}" '.workflow_runs[] | select(.event == "repository_dispatch" and .head_branch != null and (.display_title | test($caller))) | .id' | head -n 1)
+
+          echo "run_id=$run_id" >> $GITHUB_OUTPUT
+
+      - name: Post logs link to summary
+        if: steps.get-run.outputs.run_id != ''
+        run: |
+          echo "### Repo B Logs" >> $GITHUB_STEP_SUMMARY
+          echo "➡️ [View Logs in Repo B](https://github.com/org/repo-b/actions/runs/${{ steps.get-run.outputs.run_id }})" >> $GITHUB_STEP_SUMMARY
